@@ -64,24 +64,6 @@ class ChooseREINFORCE:
         self.method = method
 
     @staticmethod
-    def basic_reinforce(policy, returns, *args, **kwargs):
-        policy_loss = []
-        for log_prob, R in zip(policy.saved_log_probs, returns):
-            policy_loss.append(-log_prob * R)  # <- this line here
-        policy_loss = torch.cat(policy_loss).sum()
-        return policy_loss
-
-    @staticmethod
-    def reinforce_with_correction(policy, returns, *args, **kwargs):
-        policy_loss = []
-        for corr, log_prob, R in zip(
-            policy.correction, policy.saved_log_probs, returns
-        ):
-            policy_loss.append(corr * -log_prob * R)  # <- this line here
-        policy_loss = torch.cat(policy_loss).sum()
-        return policy_loss
-
-    @staticmethod
     def reinforce_with_TopK_correction(policy, returns, *args, **kwargs):
         policy_loss = []
         for l_k, corr, log_prob, R in zip(
@@ -165,13 +147,6 @@ def reinforce_update(
         policy_loss = params["reinforce"](
             nets["policy_net"],
             optimizer["policy_optimizer"],
-        )
-
-        soft_update(
-            nets["value_net"], nets["target_value_net"], soft_tau=params["soft_tau"]
-        )
-        soft_update(
-            nets["policy_net"], nets["target_policy_net"], soft_tau=params["soft_tau"]
         )
 
         losses = {

@@ -54,7 +54,8 @@ if __name__=='__main__':
                                batch_size=25, num_workers=1, test_size=0.05)
 
     beta_net   = Beta().to(cuda)
-    value_net  = Critic(args.policy_input_dim, args.policy_hidden_dim, num_items, args.dropout).to(cuda)
+    value_net  = Critic(args.policy_input_dim, args.policy_hidden_dim, num_items, 
+                        args.dropout, args.init_weight).to(cuda)
     policy_net = DiscreteActor(args.policy_input_dim, args.policy_hidden_dim, num_items, ).to(cuda)
 
     policy_net.action_source = {'pi': 'beta', 'beta': 'beta'}

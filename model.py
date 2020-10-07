@@ -1,15 +1,16 @@
 import torch
 import torch.nn as nn
+import torch_optimizer as optim
 import torch.nn.functional as F
 from torch.distributions import Categorical
 
-from reinforce import ChooseREINFORCE
+from reinforce import ChooseREINFORCE, reinforce_update
 
 class Beta(nn.Module):
     def __init__(self):
         super(Beta, self).__init__()
         self.net = nn.Sequential(
-            nn.Linear(1290, num_items),
+            nn.Linear(1024, num_items),
             nn.Softmax()
         )
         self.optim = optim.RAdam(self.net.parameters(), lr=1e-5, weight_decay=1e-5)
@@ -34,7 +35,7 @@ class Critic(nn.Module):
     Vanilla critic. Takes state and action as an argument, returns value.
     """
 
-    def __init__(self, input_dim, hidden_size, action_dim, dropout):
+    def __init__(self, input_dim, hidden_size, action_dim, dropout, init_w):
         super(Critic, self).__init__()
 
         self.drop_layer = nn.Dropout(p=dropout)
@@ -163,54 +164,6 @@ class DiscreteActor(nn.Module):
 
         return pi_probs
 
-def soft_update(net, target_net, soft_tau=1e-2):
-    for target_param, param in zip(target_net.parameters(), net.parameters()):
-        target_param.data.copy_(
-            target_param.data * (1.0 - soft_tau) + param.data * soft_tau
-        )
-
-
-class Algo:
-    def __init__(self):
-        self.nets = {
-            "value_net": None,
-            "policy_net": None,
-        }
-
-        self.optimizers = {"policy_optimizer": None, "value_optimizer": None}
-
-        self.params = {"Some parameters here": None}
-
-        self._step = 0
-
-        self.debug = {}
-
-        # by default it will not output anything
-        # use torch.SummaryWriter instance if you want output
-        self.writer = utils.misc.DummyWriter()
-
-        self.device = torch.device("cpu")
-
-        self.loss_layout = {
-            "test": {"value": [], "policy": [], "step": []},
-            "train": {"value": [], "policy": [], "step": []},
-        }
-
-        self.algorithm = None
-
-    def update(self, batch, learn=True):
-        return self.algorithm(
-            batch,
-            self.params,
-            self.nets,
-            self.optimizers,
-            device=self.device,
-            debug=self.debug,
-            writer=self.writer,
-            learn=learn,
-            step=self._step,
-        )
-
     def to(self, device):
         self.nets = {k: v.to(device) for k, v in self.nets.items()}
         self.device = device
@@ -220,24 +173,12 @@ class Algo:
         self._step += 1
 
 
-class Reinforce(Algo):
+class Reinforce:
     def __init__(self, policy_net, value_net):
 
         super(Reinforce, self).__init__()
 
-        self.algorithm = update.reinforce_update
-
-        # these are target networks that we need for ddpg algorigm to work
-        target_policy_net = copy.deepcopy(policy_net)
-        target_value_net = copy.deepcopy(value_net)
-
-        target_policy_net.eval()
-        target_value_net.eval()
-
-        # soft update
-        soft_update(value_net, target_value_net, soft_tau=1.0)
-        soft_update(policy_net, target_policy_net, soft_tau=1.0)
-
+        self.algorithm = reinforce_update
 
         # define optimizers
         value_optimizer = optim.Ranger(
@@ -249,9 +190,7 @@ class Reinforce(Algo):
 
         self.nets = {
             "value_net": value_net,
-            "target_value_net": target_value_net,
             "policy_net": policy_net,
-            "target_policy_net": target_policy_net,
         }
 
         self.optimizers = {
@@ -260,7 +199,7 @@ class Reinforce(Algo):
         }
 
         self.params = {
-            "reinforce": ChooseREINFORCE(ChooseREINFORCE.basic_reinforce),
+            "reinforce": ChooseREINFORCE(ChooseREINFORCE.reinforce_with_TopK_correction),
             "K": 10,
             "gamma": 0.99,
             "min_value": -10,
@@ -273,3 +212,16 @@ class Reinforce(Algo):
             "test": {"value": [], "policy": [], "step": []},
             "train": {"value": [], "policy": [], "step": []},
         }
+
+    def update(self, batch, learn=True):
+        return reinforce_update(
+            batch,
+            self.params,
+            self.nets,
+            self.optimizers,
+            device=self.device,
+            debug=self.debug,
+            writer=self.writer,
+            learn=learn,
+            step=self._step
+        )
