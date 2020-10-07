@@ -32,7 +32,7 @@ parser.add_argument("--policy_input_dim", type=int, default=1024, help="input di
 parser.add_argument("--policy_hidden_dim", type=int, default=4096, help="hidden dimension for policy/value net")
 parser.add_argument("--data_path", type=str, default="/Users/JingboLiu/Desktop/nicf-pytorch/data/ml-1m")
 parser.add_argument("--model_path", type=str, default="/Users/JingboLiu/Desktop/nicf-pytorch/models")
-parser.add_argument("--out", default=True, help="save model or not")
+parser.add_argument("--plot_every", type=int, default=100, help="how many steps to plot the result")
 parser.add_argument("--disable-cuda", action="store_true", help="Disable CUDA")
 args = parser.parse_args()
 
@@ -42,21 +42,16 @@ if not args.disable_cuda and torch.cuda.is_available():
 else:
     args.device = torch.device('cpu')
 
+args.embedding_path = os.path.join(args.data_path, 'ml20_pca128.pkl')
+args.rating_path = os.path.join(args.data_path, 'ratings.csv')
+
 cudnn.benchmark = True
 
 
 if __name__=='__main__':
-    def embed_batch(batch, item_embeddings_tensor):
-        return batch_contstate_discaction(batch, item_embeddings_tensor,
-                                                    frame_size=frame_size, num_items=num_items)
 
-    def prepare_dataset(args_mut):
-        
-
-    env = FrameEnv(dirs, frame_size, batch_size, embed_batch=embed_batch,
-                prepare_dataset=prepare_dataset, num_workers=4)
-
-
+    env = FrameEnv(embedding_path, rating_path, num_items, frame_size=10, 
+                               batch_size=25, num_workers=1, test_size=0.05)
 
     beta_net   = Beta().to(cuda)
     value_net  = Critic(args.policy_input_dim, args.policy_hidden_dim, num_items, args.dropout).to(cuda)
@@ -87,7 +82,7 @@ if __name__=='__main__':
             reinforce.step()
             if loss:
                 plotter.log_losses(loss)
-            if reinforce._step % plot_every == 0:
+            if reinforce._step % args.plot_every == 0:
                 clear_output(True)
                 print('step', reinforce._step)
                 plotter.plot_loss()

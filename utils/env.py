@@ -4,9 +4,7 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 import os
 
-from data_utils import prepare_dataset, batch_tensor_embeddings, make_items_tensor, DataFuncArgsMut,
-                       prepare_batch_static_size
-
+from data_utils import batch_tensor_embeddings, make_items_tensor, batch_contstate_discaction
 
 class UserDataset(Dataset):
 
@@ -49,93 +47,39 @@ class UserDataset(Dataset):
         size = items.shape[0]
         return {"items": items, "rates": rates, "sizes": size, "users": idx}
 
+def sort_users_itemwise(user_dict, users):
+    return (
+        pd.Series(dict([(i, user_dict[i]["items"].shape[0]) for i in users]))
+        .sort_values(ascending=False)
+        .index
+    )
 
-class EnvBase:
 
+class FrameEnv:
     """
-    Misc class used for serializing
+    Static length user environment.
     """
 
-    def __init__(self):
+    def __init__(self, embedding_path, rating_path, num_items, frame_size=10, 
+                               batch_size=25, num_workers=1, test_size=0.05):
+
+        super(FrameEnv, self).__init__()
+        
+        self.embedding_path = embedding_path
+        self.rating_path = rating_path
+        self.frame_size = frame_size
+        self.num_items =num_items
+
         self.train_user_dataset = None
         self.test_user_dataset = None
         self.embeddings = None
         self.key_to_id = None
         self.id_to_key = None
 
-
-class DataPath:
-
-    def __init__(self, base, ratings, embeddings):
-        self.ratings = base + ratings
-        self.embeddings = base + embeddings
-
-class Env:
-
-    """
-    Env abstract class
-    """
-
-    def __init__(self, path: DataPath, embed_batch=batch_tensor_embeddings, 
-                 prepare_dataset=prepare_dataset, test_size=0.05):
-
-        self.base = EnvBase()
-        self.embed_batch = embed_batch
-        self.prepare_dataset = prepare_dataset
-        self.process_env(path)
-
-    def process_env(self, path: DataPath):
-
-        movie_embeddings_key_dict = pickle.load(open(path.embeddings, "rb"))
-        (
-            self.base.embeddings,
-            self.base.key_to_id,
-            self.base.id_to_key
-        ) = make_items_tensor(movie_embeddings_key_dict)
-        ratings = pd.read_csv(path.ratings)
-
-        process_args_mut = DataFuncArgsMut(
-            df=ratings,
-            base=self.base,
-            users=None,  # will be set later
-            user_dict=None  # will be set later
-        )
-
-        self.prepare_dataset(process_args_mut)
-        self.base = process_args_mut.base
-        self.df = process_args_mut.df
-        users = process_args_mut.users
-        user_dict = process_args_mut.user_dict
-
-        train_users, test_users = train_test_split(users, test_size=test_size)
-        train_users = utils.sort_users_itemwise(user_dict, train_users)[2:]
-        test_users = utils.sort_users_itemwise(user_dict, test_users)
-        self.base.train_user_dataset = UserDataset(train_users, user_dict)
-        self.base.test_user_dataset = UserDataset(test_users, user_dict)
-
-    def load_env(self, where: str):
-        self.base = pickle.load(open(where, "rb"))
-
-    def save_env(self, where: str):
-        pickle.dump(self.base, open(where, "wb"))
-
-
-class FrameEnv(Env):
-    """
-    Static length user environment.
-    """
-
-    def __init__(self, path, frame_size=10, batch_size=25, num_workers=1):
-
-
-        super(FrameEnv, self).__init__(path, min_seq_size=frame_size + 1)
-
-        self.frame_size = frame_size
-        self.batch_size = batch_size
-        self.num_workers = num_workers
+        self.process_env()
 
         self.train_dataloader = DataLoader(
-            self.base.train_user_dataset,
+            self.train_user_dataset,
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
@@ -143,19 +87,47 @@ class FrameEnv(Env):
         )
 
         self.test_dataloader = DataLoader(
-            self.base.test_user_dataset,
+            self.test_user_dataset,
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
             collate_fn=self.prepare_batch_wrapper
         )
+    
+    def process_env(self):
+        movie_embeddings_key_dict = pickle.load(open(self.embedding_path, "rb"))
+        self.embeddings, self.key_to_id, self.id_to_key = make_items_tensor(movie_embeddings_key_dict)
+        ratings = pd.read_csv(self.rating_path)
+
+        ratings["movieId"] = ratings["movieId"].map(self.key_to_id)
+        users = ratings[["userId", "movieId"]].groupby(["userId"]).size()
+        users = users[users > frame_size].sort_values(ascending=False).index
+        ratings = ratings.sort_values(by="timestamp")
+                         .set_index("userId")
+                         .drop("timestamp", axis=1)
+                         .groupby("userId")
+        user_dict = {}
+
+        def helper(x):
+            userid = x.index[0]
+            user_dict[userid] = {}
+            user_dict[userid]["items"] = x["movieId"].values
+            user_dict[userid]["ratings"] = x["rating"].values
+
+        ratings.apply(helper)
+
+        train_users, test_users = train_test_split(users, test_size=test_size)
+        train_users = sort_users_itemwise(user_dict, train_users)[2:]
+        test_users = sort_users_itemwise(user_dict, test_users)
+        self.train_user_dataset = UserDataset(train_users, user_dict)
+        self.test_user_dataset = UserDataset(test_users, user_dict)
 
     def prepare_batch_wrapper(self, x):
-        batch = prepare_batch_static_size(
+        batch = batch_contstate_discaction(
             x,
-            self.base.embeddings,
-            embed_batch=self.embed_batch,
+            self.embeddings,
             frame_size=self.frame_size
+            num_items=self.num_items
         )
         return batch
 
